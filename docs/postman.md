@@ -13,7 +13,7 @@
 
 1. В Postman нажмите **Import** и перетащите оба файла.
 2. Выберите окружение **Signal Generator — Example**.
-3. В окружении заполните `accessToken` (столбец **Current value**) и сохраните (`Ctrl+S`).
+3. В окружении заполните `accessToken` и  `baseUrl`  (столбец **Current value**) и сохраните (`Ctrl+S`).
 
 ## Переменные окружения
 
