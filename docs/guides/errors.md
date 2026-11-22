@@ -77,28 +77,6 @@
 | `"command": "PAUSE"` (нет в списке) | 422 |
 | `?limit=0`, `?limit=1000` | 422 |
 | `from` не раньше `to` | 422 |
-
-## Как обрабатывать ошибки в клиенте
-
-```javascript
-async function call(url, options) {
-  const res = await fetch(url, options);
-  if (res.ok) return res.status === 204 ? null : res.json();
-
-  const correlationId = res.headers.get("X-Correlation-Id");
-  let err = {};
-  try { err = await res.json(); } catch { /* тело может быть не JSON (например, от прокси) */ }
-
-  switch (err.code) {
-    case "DEVICE_BUSY":
-    case "IDEMPOTENCY_REQUEST_IN_PROGRESS":
-      throw new RetryableError(err, correlationId);         // повторить позже
-    case "VALIDATION_ERROR":
-      throw new ValidationError(err.details ?? [], correlationId);
-    default:
-      // неизвестный code — решаем по HTTP-статусу
-      if (res.status === 429 || res.status >= 502) throw new RetryableError(err, correlationId);
-      throw new ApiError(res.status, err, correlationId);
   }
 }
 ```
