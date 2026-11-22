@@ -1,0 +1,1120 @@
+openapi: 3.1.0
+info:
+  title: Signal Generator Management API
+  version: 2.1.0
+  description: |
+    Учебный API для удалённого управления генератором сигналов. Генератор здесь не настоящий,
+    а программная имитация: контракт показывает, как можно устроить управление прибором
+    по сети, и к реальному оборудованию не подключается.
+
+    Через API можно получить паспортные данные устройства и его текущее состояние, прочитать
+    и сменить конфигурацию, подать команду (пуск, останов, сброс) и выгрузить журнал телеметрии.
+
+    Трассировка. В каждом ответе есть заголовок `X-Correlation-Id`, по нему запрос находится
+    в журналах сервиса. Если ответ с ошибкой, то же значение лежит в поле `correlationId`.
+
+    Версии. `info.version` — номер редакции этого документа. Версия самого API записана в пути
+    (`/v1`) и меняется только тогда, когда ломается совместимость.
+
+    Ошибки 400 и 422. Запрос проверяется в два приёма:
+    - 400 `BAD_REQUEST` — запрос не удалось разобрать. В теле битый JSON, или параметр пути
+      либо запроса не приводится к нужному типу: например, `limit=abc` или `from=не-дата`.
+    - 422 `VALIDATION_ERROR` — разобрать удалось, но значения не прошли проверку: у поля
+      не тот тип, обязательного поля нет, есть лишнее поле, значение вне диапазона или
+      не из списка (сюда же `limit=0` и `limit=1000`), не выполнено правило между полями
+      (`from` должен быть раньше `to`). Какие именно поля не прошли, видно в `details`.
+
+    Совместимость. Без смены `/v1` могут появиться новые эндпоинты, новые необязательные поля
+    в ответах и новые значения перечислений в ответах (`state`, `connectivity`, `status`,
+    `code` ошибки). Поэтому клиент должен пропускать незнакомые поля, а для незнакомого
+    значения перечисления иметь разумное поведение по умолчанию, например обрабатывать
+    ответ по HTTP-статусу.
+  contact:
+    name: Поддержка API
+    email: api-support@example.com
+servers:
+  - url: https://api.example.com
+    description: Адрес для примера, настоящего сервера по нему нет
+tags:
+  - name: Devices
+    description: Паспорт устройства и его текущее состояние.
+  - name: Configuration
+    description: Чтение и замена конфигурации устройства.
+  - name: Commands
+    description: Команды устройству. Выполняются асинхронно, ход выполнения можно отслеживать.
+  - name: Telemetry
+    description: Журнал телеметрии с выборкой по времени и выдачей страницами.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/devices/{deviceId}:
+    get:
+      tags: [Devices]
+      summary: Получить информацию об устройстве
+      description: |
+        Возвращает паспортные данные устройства: название, модель, версию прошивки и есть ли
+        сейчас с ним связь (`connectivity`).
+
+        Это сведения о том, что за прибор. Что он делает в данный момент, показывает
+        `GET /v1/devices/{deviceId}/status`.
+      operationId: getDevice
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Информация об устройстве
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+              examples:
+                default:
+                  value:
+                    id: sg-001
+                    name: Signal Generator 001
+                    model: SG-Demo
+                    firmwareVersion: 1.2.0
+                    connectivity: ONLINE
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/devices/{deviceId}/status:
+    get:
+      tags: [Devices]
+      summary: Получить текущий статус устройства
+      description: |
+        Текущее состояние устройства: в каком оно режиме (`state`: простой, готов, занят,
+        ошибка) и включён ли выход (`outputEnabled`).
+
+        Связь с устройством и его режим работы — разные вещи, поэтому связь вынесена
+        в отдельное поле `connectivity`. Если связи нет, в `state` остаётся последнее
+        состояние, которое успели получить, а `updatedAt` показывает, когда это было.
+
+        Перед командой или сменой конфигурации имеет смысл сначала заглянуть сюда.
+      operationId: getDeviceStatus
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Текущий статус
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStatus'
+              examples:
+                ready:
+                  value:
+                    deviceId: sg-001
+                    connectivity: ONLINE
+                    state: READY
+                    outputEnabled: false
+                    updatedAt: '2026-01-15T10:20:30Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1/devices/{deviceId}/configuration:
+    get:
+      tags: [Configuration]
+      summary: Получить конфигурацию устройства
+      description: |
+        Возвращает конфигурацию, с которой устройство работает сейчас: профиль, уровень
+        выхода и период записи телеметрии.
+
+        Отдаётся та конфигурация, которую устройство последней подтвердило, то есть та же,
+        что пришла в ответе `200` на последний успешный `PUT`. К самому устройству запрос
+        не обращается, данные берутся из платформы. Поэтому он работает и тогда, когда связи
+        с устройством нет (`connectivity` не `ONLINE`).
+
+        Обычный порядок работы: прочитать конфигурацию, поправить нужное поле и отправить
+        её обратно через `PUT`.
+      operationId: getDeviceConfiguration
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Действующая конфигурация
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceConfiguration'
+              examples:
+                configuration:
+                  value:
+                    profile: STANDARD
+                    outputLevel: 10
+                    telemetryIntervalSeconds: 5
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+    put:
+      tags: [Configuration]
+      summary: Заменить конфигурацию устройства
+      description: |
+        Записывает в устройство новую конфигурацию: профиль, уровень выхода и период записи
+        телеметрии.
+
+        Конфигурация заменяется целиком, поэтому в запросе всегда должны быть все три поля.
+        Если нужно поменять одно, сначала прочитайте текущую конфигурацию через `GET`
+        и отправьте её с исправленным полем.
+
+        Когда приходит `200`. Запрос синхронный: `200` приходит только после того, как
+        конфигурация сохранена и устройство подтвердило, что её применило. В теле ответа
+        та конфигурация, которая теперь действует. Если подтверждения нет (`502` или `504`),
+        устройство продолжает работать на старой конфигурации. Половинчатого состояния, когда
+        часть параметров уже новая, а часть ещё старая, не бывает.
+
+        Другие ответы:
+        - `409` с кодом `DEVICE_BUSY` — устройство сейчас занято, конфигурацию менять нельзя.
+          Подождите и повторите.
+        - `400` — тело не является корректным JSON.
+        - `422` — значение не прошло проверку: например, уровень выхода больше 100, поле
+          пропущено или есть лишнее.
+      operationId: updateDeviceConfiguration
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceConfiguration'
+            examples:
+              configuration:
+                value:
+                  profile: STANDARD
+                  outputLevel: 10
+                  telemetryIntervalSeconds: 5
+      responses:
+        '200':
+          description: Конфигурация сохранена и применена устройством
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceConfiguration'
+              examples:
+                configuration:
+                  value:
+                    profile: STANDARD
+                    outputLevel: 10
+                    telemetryIntervalSeconds: 5
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1/devices/{deviceId}/commands:
+    post:
+      tags: [Commands]
+      summary: Отправить команду устройству
+      description: |
+        Подаёт устройству команду: пуск (`START`), останов (`STOP`) или сброс (`RESET`).
+
+        Команда выполняется не мгновенно, поэтому API не ждёт её завершения и сразу отвечает
+        `202 Accepted`. Это означает только то, что команда принята в работу. Заголовок
+        `Location` указывает на ресурс команды, а чем всё закончилось, показывает
+        `GET /v1/devices/{deviceId}/commands/{commandId}`.
+
+        Если запрос отклонён, команда не создаётся: приходит ответ `4xx` (например, `409`
+        или `422`), и на этом всё. Если же команду приняли, но выполнить её не получилось,
+        она получает статус `FAILED`, а причина лежит в объекте `failure`.
+
+        Повторная отправка. Бывает, что запрос до сервера дошёл, а ответ потерялся (обрыв
+        связи, таймаут). Тогда отправьте запрос ещё раз с тем же заголовком `Idempotency-Key`:
+        - тело то же — вернётся исходный ответ `202` с тем же `commandId`, вторая команда
+          не создаётся;
+        - тело другое — `409` с кодом `IDEMPOTENCY_KEY_REUSED`;
+        - первый запрос с этим ключом ещё обрабатывается — `409` с кодом
+          `IDEMPOTENCY_REQUEST_IN_PROGRESS`, подождите и повторите.
+
+        Ключ закрепляется только за принятой командой (`202`). Если первый запрос получил
+        `4xx` или `5xx`, повтор с тем же ключом считается новым запросом. Остальные правила
+        описаны у параметра `Idempotency-Key`.
+
+        Если устройство в своём текущем состоянии выполнить команду не может, придёт `409`
+        с кодом `DEVICE_NOT_READY`.
+      operationId: submitDeviceCommand
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: |
+            Необязательный ключ длиной до 128 символов. Нужен, чтобы при повторной отправке
+            не получить две одинаковые команды. Удобнее всего генерировать UUID.
+
+            Область действия. Ключ уникален в пределах клиента (владельца токена), устройства
+            (`deviceId`) и этого эндпоинта. Тот же ключ для другого устройства считается новым.
+
+            Срок хранения. 24 часа с момента первого принятого запроса (ответ `202`). Затем ключ
+            можно использовать заново, запрос будет обработан как новый.
+
+            Как сравниваются запросы. По методу, пути и телу. Тела сравниваются по значениям
+            JSON, порядок полей и пробелы роли не играют. Совпало — возвращаются тот же ресурс команды
+            и тот же `Location`. Для повтора создаётся новый `X-Correlation-Id`, относящийся
+            к текущему HTTP-запросу. Не совпало — `409` с кодом `IDEMPOTENCY_KEY_REUSED`.
+
+            Какие ответы запоминаются. Только принятая команда (ответ `202`). Отсчёт 24 часов
+            начинается с принятого запроса. Если первый запрос завершился ответом `4xx` или
+            `5xx`, ключ не сохраняется, и повтор с тем же ключом обрабатывается как новый
+            запрос. При `5xx` сервер не гарантирует, что команда не была создана до ошибки;
+            клиенту следует учитывать риск повторного создания команды.
+
+            Одновременные запросы. Если повтор пришёл, пока первый запрос с этим ключом ещё
+            в обработке, вернётся `409` с кодом `IDEMPOTENCY_REQUEST_IN_PROGRESS`. Подождите
+            и повторите с тем же ключом.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommandRequest'
+            examples:
+              start:
+                value:
+                  command: START
+                  parameters: {}
+              stop:
+                value:
+                  command: STOP
+                  parameters: {}
+      responses:
+        '202':
+          description: Команда принята, выполняется асинхронно
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+            Location:
+              description: >
+                Относительный адрес ресурса команды вида
+                `/v1/devices/{deviceId}/commands/{commandId}`.
+              schema:
+                type: string
+                format: uri-reference
+              example: /v1/devices/sg-001/commands/cmd-10001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+              examples:
+                accepted:
+                  value:
+                    commandId: cmd-10001
+                    deviceId: sg-001
+                    command: START
+                    status: ACCEPTED
+                    createdAt: '2026-01-15T10:21:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /v1/devices/{deviceId}/commands/{commandId}:
+    get:
+      tags: [Commands]
+      summary: Получить статус выполнения команды
+      description: |
+        Показывает, на каком этапе команда. `commandId` берётся из ответа на отправку команды,
+        или можно просто перейти по адресу из заголовка `Location` того же ответа.
+
+        Команда проходит этапы `ACCEPTED`, `IN_PROGRESS` и заканчивается в `SUCCEEDED` или
+        `FAILED`. Опрашивайте ресурс с паузой, пока статус не станет одним из двух конечных.
+        После завершения заполняется `completedAt`, а при неудаче появляется объект `failure`
+        с причиной.
+      operationId: getCommand
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/CommandId'
+      responses:
+        '200':
+          description: Статус команды
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+              examples:
+                completed:
+                  value:
+                    commandId: cmd-10001
+                    deviceId: sg-001
+                    command: START
+                    status: SUCCEEDED
+                    createdAt: '2026-01-15T10:21:00Z'
+                    completedAt: '2026-01-15T10:21:02Z'
+                failed:
+                  value:
+                    commandId: cmd-10002
+                    deviceId: sg-001
+                    command: RESET
+                    status: FAILED
+                    createdAt: '2026-01-15T10:25:00Z'
+                    completedAt: '2026-01-15T10:25:03Z'
+                    failure:
+                      code: HARDWARE_FAULT
+                      message: The simulated device reported a fault during reset.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/devices/{deviceId}/telemetry:
+    get:
+      tags: [Telemetry]
+      summary: Получить телеметрию устройства
+      description: |
+        Журнал телеметрии: что устройство записывало во время работы (режим, температура,
+        уровень выхода и т. д.).
+
+        Порядок записей. По возрастанию `timestamp`. Если у нескольких записей одинаковое
+        время, они идут в постоянном порядке (по внутреннему номеру записи). Поэтому при
+        чтении страницами записи не теряются и не повторяются.
+
+        Выдача страницами. Окно по времени задаётся параметрами `from` и `to`, размер
+        страницы — параметром `limit`. Если записей больше, чем помещается на странице,
+        в ответе будет `nextCursor`. Его передают в параметре `cursor`, чтобы получить
+        следующую страницу. `nextCursor: null` значит, что записи закончились.
+
+        Правила для курсора:
+        - курсор привязан к тем `from` и `to`, с которыми он получен, менять их между
+          страницами нельзя;
+        - `limit` между страницами менять можно;
+        - значение `nextCursor` не длиннее 512 символов;
+        - курсор передаётся как есть. Если он испорчен или не подходит к `from` и `to`,
+          вернётся `400` с кодом `INVALID_CURSOR`.
+
+        Если заданы оба параметра, `from` должен быть раньше `to`, иначе будет `422`. Если `from`, `to` или `limit`
+        не удаётся разобрать (не дата, не число), будет `400`.
+      operationId: getDeviceTelemetry
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - name: from
+          in: query
+          required: false
+          description: Начало окна по времени (включительно), формат ISO 8601.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: >
+            Конец окна по времени (не включительно), формат ISO 8601. Если заданы оба
+            параметра, `to` должен быть позже `from`.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          required: false
+          description: >
+            Сколько записей максимум отдать на одной странице. Между страницами можно менять.
+            Не число — `400`, число вне диапазона 1–500 — `422`.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: cursor
+          in: query
+          required: false
+          description: >
+            Значение `nextCursor` из предыдущего ответа. Привязан к `from` и `to`, их между
+            страницами не меняют. Это служебная строка: разбирать её или собирать самому
+            не нужно, передавайте как есть.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+      responses:
+        '200':
+          description: Записи телеметрии
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelemetryPage'
+              examples:
+                firstPage:
+                  summary: Есть ещё записи
+                  value:
+                    deviceId: sg-001
+                    items:
+                      - timestamp: '2026-01-15T10:20:30Z'
+                        state: READY
+                        outputEnabled: false
+                        temperatureC: 36.6
+                        outputLevel: 10
+                      - timestamp: '2026-01-15T10:20:35Z'
+                        state: READY
+                        outputEnabled: false
+                        temperatureC: 36.7
+                        outputLevel: 10
+                    nextCursor: eyJvIjoyfQ
+                lastPage:
+                  summary: Больше записей нет
+                  value:
+                    deviceId: sg-001
+                    items:
+                      - timestamp: '2026-01-15T10:20:40Z'
+                        state: READY
+                        outputEnabled: false
+                    nextCursor: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  headers:
+    XCorrelationId:
+      description: >
+        Идентификатор запроса, по которому его можно проследить по журналам всех сервисов.
+        В ответах с ошибкой совпадает с полем `correlationId`.
+      schema:
+        type: string
+      example: 7f3c2b1e-0000-4000-8000-000000000010
+    WWWAuthenticate:
+      description: >
+        Какую схему аутентификации ждёт сервер (RFC 9110, RFC 6750). Если токен передан,
+        но не годится (недействителен или истёк), в заголовке будет `error="invalid_token"`.
+      schema:
+        type: string
+      example: Bearer realm="signal-generator-api", error="invalid_token"
+    RetryAfter:
+      description: Через сколько секунд можно повторить запрос.
+      schema:
+        type: integer
+        minimum: 0
+      example: 30
+
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      description: Идентификатор устройства.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+      example: sg-001
+    CommandId:
+      name: commandId
+      in: path
+      required: true
+      description: Идентификатор команды, который вернулся при её отправке.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+      example: cmd-10001
+
+  responses:
+    BadRequest:
+      description: >
+        Запрос не удалось разобрать: в теле битый JSON, параметр пути или запроса
+        не приводится к нужному типу, либо курсор недействителен
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            badRequest:
+              value:
+                code: BAD_REQUEST
+                message: Malformed request or invalid parameter format.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000001
+            invalidCursor:
+              summary: Курсор недействителен или не подходит к параметрам запроса
+              value:
+                code: INVALID_CURSOR
+                message: The cursor is invalid or does not match the request parameters.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000011
+    Unauthorized:
+      description: Нет аутентификации или токен недействителен
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            unauthorized:
+              value:
+                code: UNAUTHORIZED
+                message: Authentication is missing or invalid.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000002
+    Forbidden:
+      description: Токен в порядке, но доступа к этому устройству у него нет
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            forbidden:
+              value:
+                code: FORBIDDEN
+                message: Access to the requested device is not allowed.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000012
+    NotFound:
+      description: Устройство или команда не найдены
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            deviceNotFound:
+              value:
+                code: DEVICE_NOT_FOUND
+                message: Device was not found.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000003
+            commandNotFound:
+              value:
+                code: COMMAND_NOT_FOUND
+                message: Command was not found.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000004
+    Conflict:
+      description: >
+        Запрос противоречит текущему состоянию устройства или повторяет ранее отправленный
+        запрос с тем же ключом идемпотентности (тело другое либо первый запрос ещё
+        обрабатывается)
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            deviceNotReady:
+              summary: Устройство в текущем состоянии не может выполнить команду
+              value:
+                code: DEVICE_NOT_READY
+                message: Device is not ready to execute the requested command.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000005
+            deviceBusy:
+              summary: Конфигурацию сейчас менять нельзя, устройство занято
+              value:
+                code: DEVICE_BUSY
+                message: Configuration cannot be changed while the device is busy.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000006
+            idempotencyKeyReused:
+              summary: Idempotency-Key уже использован с другим телом запроса
+              value:
+                code: IDEMPOTENCY_KEY_REUSED
+                message: The Idempotency-Key was already used with a different request body.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000007
+            idempotencyRequestInProgress:
+              summary: Запрос с этим Idempotency-Key ещё обрабатывается
+              value:
+                code: IDEMPOTENCY_REQUEST_IN_PROGRESS
+                message: A request with this Idempotency-Key is still being processed. Retry later.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000017
+    ValidationError:
+      description: >
+        Запрос разобран, но значения не прошли проверку: у поля не тот тип, поле пропущено
+        или лишнее, значение вне диапазона или не из списка, не выполнено правило между
+        полями. Какие поля не прошли, перечислено в `details`
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            validationError:
+              value:
+                code: VALIDATION_ERROR
+                message: Request validation failed.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000008
+                details:
+                  - field: outputLevel
+                    issue: must be between 0 and 100
+    TooManyRequests:
+      description: Слишком много запросов, нужно подождать
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            rateLimit:
+              value:
+                code: RATE_LIMIT_EXCEEDED
+                message: Too many requests. Retry after the time given in Retry-After.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000013
+    InternalError:
+      description: Непредвиденная ошибка на стороне сервера
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            internalError:
+              value:
+                code: INTERNAL_ERROR
+                message: Unexpected server-side error.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000009
+    BadGateway:
+      description: Сбой обмена данными с устройством или интеграционным слоем
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            badGateway:
+              value:
+                code: DEVICE_COMMUNICATION_ERROR
+                message: Could not communicate with the device.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000014
+    ServiceUnavailable:
+      description: Сервис временно недоступен
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            serviceUnavailable:
+              value:
+                code: SERVICE_UNAVAILABLE
+                message: The service is temporarily unavailable.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000015
+    GatewayTimeout:
+      description: Устройство или интеграционный слой не ответили вовремя
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/XCorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            gatewayTimeout:
+              value:
+                code: DEVICE_TIMEOUT
+                message: The device did not respond in time.
+                correlationId: 7f3c2b1e-0000-4000-8000-000000000016
+
+  schemas:
+    DeviceState:
+      type: string
+      description: >
+        Режим работы устройства: известные значения — `IDLE`, `READY`, `BUSY`, `ERROR`. Есть ли с ним связь,
+        описывает отдельная схема `Connectivity`. Список значений может пополниться без смены
+        версии API: незнакомое значение клиент должен считать `ERROR`.
+
+
+    Connectivity:
+      type: string
+      description: >
+        Есть ли у платформы связь с устройством: известные значения — `ONLINE`, `OFFLINE`, `UNKNOWN`.
+        От режима работы (`DeviceState`) не зависит.
+        Если связи нет, в `DeviceStatus.state` остаётся последнее полученное состояние,
+        а `updatedAt` показывает, когда его получили. Список значений может пополниться
+        без смены версии API: незнакомое значение клиент должен считать `UNKNOWN`.
+
+
+    Device:
+      type: object
+      required: [id, name, model, firmwareVersion, connectivity]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        model:
+          type: string
+          minLength: 1
+          maxLength: 64
+        firmwareVersion:
+          type: string
+          minLength: 1
+          maxLength: 32
+        connectivity:
+          $ref: '#/components/schemas/Connectivity'
+
+    DeviceStatus:
+      type: object
+      required: [deviceId, connectivity, state, outputEnabled, updatedAt]
+      properties:
+        deviceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        connectivity:
+          $ref: '#/components/schemas/Connectivity'
+        state:
+          $ref: '#/components/schemas/DeviceState'
+        outputEnabled:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+
+    DeviceConfiguration:
+      type: object
+      additionalProperties: false
+      required: [profile, outputLevel, telemetryIntervalSeconds]
+      properties:
+        profile:
+          type: string
+          enum: [STANDARD, LOW_NOISE, TEST]
+        outputLevel:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: >
+            Условный уровень выхода для демонстрации. В физических единицах (дБм, вольты)
+            не выражается.
+        telemetryIntervalSeconds:
+          type: integer
+          minimum: 1
+          maximum: 60
+
+    CommandRequest:
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command:
+          type: string
+          enum: [START, STOP, RESET]
+        parameters:
+          type: object
+          description: >
+            Параметры команды. В этой версии ни у одной команды параметров нет, поэтому
+            объект всегда пустой.
+          additionalProperties: false
+          default: {}
+
+    Command:
+      type: object
+      description: >
+        Команда, принятая к выполнению. Ресурс создаётся только для принятого запроса,
+        отклонённый запрос заканчивается ответом `4xx` без создания ресурса.
+        Какие поля когда заполнены: при `ACCEPTED` и `IN_PROGRESS` нет ни `completedAt`,
+        ни `failure`; при `SUCCEEDED` есть `completedAt`, а `failure` нет; при `FAILED`
+        есть оба.
+      required: [commandId, deviceId, command, status, createdAt]
+      properties:
+        commandId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        deviceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        command:
+          type: string
+          enum: [START, STOP, RESET]
+        status:
+          type: string
+          description: >
+            Ход выполнения команды. Известные значения: `ACCEPTED`, `IN_PROGRESS`, `SUCCEEDED`, `FAILED`.
+            Первые два промежуточные, последние два конечные. `FAILED` означает, что команду приняли, но выполнить
+            не смогли. Список статусов может пополниться без смены версии API: незнакомый
+            статус клиент должен считать промежуточным и продолжать опрос.
+
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          description: >
+            Когда команда завершилась. Заполняется только при статусе `SUCCEEDED`
+            или `FAILED`.
+        failure:
+          $ref: '#/components/schemas/CommandFailure'
+      allOf:
+        - if:
+            required: [status]
+            properties:
+              status:
+                enum: [ACCEPTED, IN_PROGRESS]
+          then:
+            not:
+              anyOf:
+                - required: [completedAt]
+                - required: [failure]
+        - if:
+            required: [status]
+            properties:
+              status:
+                const: SUCCEEDED
+          then:
+            required: [completedAt]
+            not:
+              required: [failure]
+        - if:
+            required: [status]
+            properties:
+              status:
+                const: FAILED
+          then:
+            required: [completedAt, failure]
+
+    CommandFailure:
+      type: object
+      description: Почему команда не выполнилась. Есть только при статусе команды `FAILED`.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: >
+            Код причины для программы, например `HARDWARE_FAULT`. Набор кодов открытый:
+            клиент должен быть готов к значениям, которых нет в примерах.
+          example: HARDWARE_FAULT
+        message:
+          type: string
+
+    TelemetryPage:
+      type: object
+      required: [deviceId, items, nextCursor]
+      properties:
+        deviceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        items:
+          type: array
+          description: Записи по возрастанию `timestamp`.
+          items:
+            $ref: '#/components/schemas/TelemetryRecord'
+        nextCursor:
+          type: [string, 'null']
+          maxLength: 512
+          description: >
+            Курсор следующей страницы, передаётся в параметре запроса `cursor`.
+            Равен `null`, когда записей больше нет.
+
+    TelemetryRecord:
+      type: object
+      required: [timestamp, state, outputEnabled]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        state:
+          $ref: '#/components/schemas/DeviceState'
+        outputEnabled:
+          type: boolean
+        temperatureC:
+          type: number
+          description: Температура, °C. Значение условное, для примера.
+        outputLevel:
+          type: integer
+          minimum: 0
+          maximum: 100
+
+    Error:
+      type: object
+      required: [code, message, correlationId]
+      properties:
+        code:
+          type: string
+          description: |
+            Код ошибки для программы. Логику клиента стройте по нему, а не по тексту `message`.
+            Список кодов может пополниться без смены версии API: незнакомый код клиент должен
+            обрабатывать по HTTP-статусу ответа.
+
+            | Код | HTTP-статус | Что случилось |
+            |---|---|---|
+            | `BAD_REQUEST` | 400 | Запрос не удалось разобрать: битый JSON или параметр не того типа |
+            | `INVALID_CURSOR` | 400 | Курсор недействителен или не подходит к параметрам запроса |
+            | `UNAUTHORIZED` | 401 | Нет аутентификации или токен недействителен |
+            | `FORBIDDEN` | 403 | Токен в порядке, но доступа к устройству нет |
+            | `DEVICE_NOT_FOUND` | 404 | Устройство не найдено |
+            | `COMMAND_NOT_FOUND` | 404 | Команда не найдена |
+            | `DEVICE_NOT_READY` | 409 | Устройство в текущем состоянии не может выполнить команду |
+            | `DEVICE_BUSY` | 409 | Устройство занято, конфигурацию сейчас менять нельзя |
+            | `IDEMPOTENCY_KEY_REUSED` | 409 | `Idempotency-Key` уже использован с другим телом запроса |
+            | `IDEMPOTENCY_REQUEST_IN_PROGRESS` | 409 | Запрос с этим `Idempotency-Key` ещё обрабатывается |
+            | `VALIDATION_ERROR` | 422 | Запрос разобран, но значения не прошли проверку |
+            | `RATE_LIMIT_EXCEEDED` | 429 | Слишком много запросов |
+            | `INTERNAL_ERROR` | 500 | Непредвиденная ошибка на стороне сервера |
+            | `DEVICE_COMMUNICATION_ERROR` | 502 | Сбой обмена данными с устройством или интеграционным слоем |
+            | `SERVICE_UNAVAILABLE` | 503 | Сервис временно недоступен |
+            | `DEVICE_TIMEOUT` | 504 | Устройство или интеграционный слой не ответили вовремя |
+
+          example: DEVICE_NOT_READY
+        message:
+          type: string
+          example: Device is not ready to execute the requested command.
+        correlationId:
+          type: string
+          description: Идентификатор для поиска запроса в журналах. Совпадает с заголовком `X-Correlation-Id`.
+        details:
+          type: array
+          description: Ошибки по отдельным полям запроса.
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, issue]
+            properties:
+              field:
+                type: string
+                description: >
+                  Где ошибка. Для тела — путь через точку (`outputLevel`,
+                  `parameters.unexpected`), для параметров запроса — имя параметра (`limit`).
+              issue:
+                type: string
+      allOf:
+        - if:
+            required: [code]
+            properties:
+              code:
+                const: VALIDATION_ERROR
+          then:
+            required: [details]
