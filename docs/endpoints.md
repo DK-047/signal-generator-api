@@ -46,12 +46,6 @@
 Что это за устройство: название, модель, версия прошивки и доступно ли оно сейчас для платформы.
 Чем устройство занято прямо сейчас, показывает [статус](#получить-текущий-статус-устройства).
 
-**Пример**
-
-```bash
-curl "$BASE_URL/v1/devices/sg-001" -H "Authorization: Bearer $TOKEN"
-```
-
 **Ответ `200` — объект `Device`**
 
 ```json
@@ -82,12 +76,6 @@ curl "$BASE_URL/v1/devices/sg-001" -H "Authorization: Bearer $TOKEN"
 
 Чем устройство занято прямо сейчас и включён ли выход. Удобно вызвать перед отправкой команды
 или сменой конфигурации.
-
-**Пример**
-
-```bash
-curl "$BASE_URL/v1/devices/sg-001/status" -H "Authorization: Bearer $TOKEN"
-```
 
 **Ответ `200` — объект `DeviceStatus`**
 
@@ -131,12 +119,6 @@ curl "$BASE_URL/v1/devices/sg-001/status" -H "Authorization: Bearer $TOKEN"
 успешный `PUT`). Запрос читает данные платформы и к устройству не обращается, поэтому работает,
 даже когда устройство недоступно.
 
-**Пример**
-
-```bash
-curl "$BASE_URL/v1/devices/sg-001/configuration" -H "Authorization: Bearer $TOKEN"
-```
-
 **Ответ `200` — объект `DeviceConfiguration`**
 
 ```json
@@ -165,13 +147,6 @@ curl "$BASE_URL/v1/devices/sg-001/configuration" -H "Authorization: Bearer $TOKE
 Чтобы изменить одно поле — сначала [получите текущую конфигурацию](#получить-конфигурацию-устройства).
 
 **Тело запроса — `DeviceConfiguration`** (поля и ограничения — как в ответе GET выше)
-
-```bash
-curl -X PUT "$BASE_URL/v1/devices/sg-001/configuration" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"profile": "STANDARD", "outputLevel": 10, "telemetryIntervalSeconds": 5}'
-```
 
 **Ответ `200`** — действующая конфигурация (то же, что отправили).
 
@@ -211,14 +186,6 @@ curl -X PUT "$BASE_URL/v1/devices/sg-001/configuration" \
 | `command` | `START` \| `STOP` \| `RESET` | да | Команда |
 | `parameters` | object | нет | Параметры команды. В этой версии всегда пустой объект `{}` (по умолчанию `{}`) |
 
-```bash
-curl -i -X POST "$BASE_URL/v1/devices/sg-001/commands" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: 3f6c1a4e-8b1d-4c55-9a0e-2d7f5b1c9e30" \
-  -d '{"command": "START", "parameters": {}}'
-```
-
 **Ответ `202` — объект `Command`**
 
 ```http
@@ -254,12 +221,6 @@ X-Correlation-Id: 7f3c2b1e-0000-4000-8000-000000000010
 ## Получить статус выполнения команды
 
 `GET /v1/devices/{deviceId}/commands/{commandId}` · operationId `getCommand` · тег Commands
-
-**Пример**
-
-```bash
-curl "$BASE_URL/v1/devices/sg-001/commands/cmd-10001" -H "Authorization: Bearer $TOKEN"
-```
 
 **Ответ `200` — объект `Command`** (пример неудачной команды)
 
@@ -314,11 +275,6 @@ curl "$BASE_URL/v1/devices/sg-001/commands/cmd-10001" -H "Authorization: Bearer 
 | `to` | date-time | — | Конец окна, **не включая**. Если заданы оба — `to` позже `from` |
 | `limit` | integer, 1–500 | `100` | Записей на странице. Между страницами менять можно |
 | `cursor` | string, 1–512 | — | `nextCursor` из предыдущего ответа. Привязан к `from` и `to` |
-
-```bash
-curl "$BASE_URL/v1/devices/sg-001/telemetry?from=2026-01-15T10:00:00Z&to=2026-01-15T11:00:00Z&limit=2" \
-  -H "Authorization: Bearer $TOKEN"
-```
 
 **Ответ `200` — объект `TelemetryPage`**
 
