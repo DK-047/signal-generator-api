@@ -1,0 +1,108 @@
+# Ошибки
+
+[← К оглавлению](../../README.md)
+
+## Формат ошибки
+
+Любой ответ с кодом `4xx` или `5xx` содержит тело единого формата (схема `Error`):
+
+```json
+{
+  "code": "VALIDATION_ERROR",
+  "message": "Request validation failed.",
+  "correlationId": "7f3c2b1e-0000-4000-8000-000000000008",
+  "details": [
+    { "field": "outputLevel", "issue": "must be between 0 and 100" }
+  ]
+}
+```
+
+| Поле | Обяз. | Описание |
+|---|---|---|
+| `code` | да | Машиночитаемый код. **Логику клиента стройте по нему** |
+| `message` | да | Пояснение для человека (на английском). Может меняться — не разбирайте его программно |
+| `correlationId` | да | Идентификатор запроса; совпадает с заголовком `X-Correlation-Id` |
+| `details` | нет | Ошибки по отдельным полям: `field` — путь к полю, `issue` — что не так |
+
+`field` в `details`: для тела — путь через точку (`outputLevel`, `parameters.unexpected`), для
+параметров запроса — имя параметра (`limit`).
+
+## `X-Correlation-Id`
+
+Заголовок есть в **каждом** ответе, в том числе успешном. В ошибках его значение равно
+`correlationId` в теле. Записывайте его в свои логи и указывайте в обращениях в поддержку —
+по нему запрос находят в журналах сервиса.
+
+## Коды ошибок
+
+| `code` | HTTP | Значение | Повторять? |
+|---|---|---|---|
+| `BAD_REQUEST` | 400 | Запрос не удалось разобрать: некорректный JSON или параметр не того типа | Нет — исправьте запрос |
+| `INVALID_CURSOR` | 400 | Курсор недействителен или не соответствует `from`/`to` | Нет — начните выборку заново без `cursor` |
+| `UNAUTHORIZED` | 401 | Нет аутентификации или токен недействителен | После обновления токена |
+| `FORBIDDEN` | 403 | Нет доступа к устройству | Нет |
+| `DEVICE_NOT_FOUND` | 404 | Устройство не найдено | Нет |
+| `COMMAND_NOT_FOUND` | 404 | Команда не найдена | Нет |
+| `DEVICE_NOT_READY` | 409 | Устройство не может выполнить команду в текущем состоянии | Да, когда изменится состояние |
+| `DEVICE_BUSY` | 409 | Конфигурацию нельзя изменить: устройство занято | Да, с паузой |
+| `IDEMPOTENCY_KEY_REUSED` | 409 | `Idempotency-Key` уже использован с другим телом | Нет — нужен новый ключ |
+| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | 409 | Запрос с этим ключом ещё обрабатывается | Да, с тем же ключом, с паузой |
+| `VALIDATION_ERROR` | 422 | Запрос разобран, но значения не прошли проверку | Нет — исправьте данные |
+| `RATE_LIMIT_EXCEEDED` | 429 | Превышена частота запросов | Да, через `Retry-After` |
+| `INTERNAL_ERROR` | 500 | Непредвиденная ошибка сервера | Осторожно, см. [повторы](rate-limits-and-retries.md) |
+| `DEVICE_COMMUNICATION_ERROR` | 502 | Ошибка связи с устройством или интеграционным слоем | Да, с паузой |
+| `SERVICE_UNAVAILABLE` | 503 | Сервис временно недоступен | Да, через `Retry-After` |
+| `DEVICE_TIMEOUT` | 504 | Устройство не ответило вовремя | Да, с паузой |
+
+> Список кодов может расшириться без смены версии API. Неизвестный `code` обрабатывайте
+> по HTTP-статусу ответа.
+
+## 400 или 422
+
+Запрос проверяется в два этапа.
+
+1. **Разбор → `400 BAD_REQUEST`.** Запрос не удалось прочитать: тело не является корректным
+   JSON-объектом, или параметр пути/запроса нельзя привести к нужному типу.
+2. **Проверка → `422 VALIDATION_ERROR`.** Запрос прочитан, но значения нарушают правила.
+   В `details` перечислены поля с ошибками.
+
+| Пример | Ответ |
+|---|---|
+| Тело `{"profile": "STANDARD",` (обрыв JSON) | 400 |
+| `?limit=abc`, `?from=не-дата` | 400 |
+| `"outputLevel": 150` | 422 |
+| `"outputLevel": "10"` (строка вместо числа в теле) | 422 |
+| Пропущено поле `telemetryIntervalSeconds` | 422 |
+| Лишнее поле, в том числе внутри `parameters` | 422 |
+| `"command": "PAUSE"` (нет в списке) | 422 |
+| `?limit=0`, `?limit=1000` | 422 |
+| `from` не раньше `to` | 422 |
+
+## Как обрабатывать ошибки в клиенте
+
+```javascript
+async function call(url, options) {
+  const res = await fetch(url, options);
+  if (res.ok) return res.status === 204 ? null : res.json();
+
+  const correlationId = res.headers.get("X-Correlation-Id");
+  let err = {};
+  try { err = await res.json(); } catch { /* тело может быть не JSON (например, от прокси) */ }
+
+  switch (err.code) {
+    case "DEVICE_BUSY":
+    case "IDEMPOTENCY_REQUEST_IN_PROGRESS":
+      throw new RetryableError(err, correlationId);         // повторить позже
+    case "VALIDATION_ERROR":
+      throw new ValidationError(err.details ?? [], correlationId);
+    default:
+      // неизвестный code — решаем по HTTP-статусу
+      if (res.status === 429 || res.status >= 502) throw new RetryableError(err, correlationId);
+      throw new ApiError(res.status, err, correlationId);
+  }
+}
+```
+
+Ошибка без тела в формате `Error` (например, HTML от прокси или
+`{"error": {"name": ..., "message": ...}}` от мок-сервера Postman) пришла **не от этого API**:
+в ней нет `code` и `correlationId`.
