@@ -26,8 +26,6 @@
 читает данные платформы, не обращаясь к устройству. Реальное устройство развёртывания может
 отличаться.
 
-![Контекст системы](diagrams/01-context.svg)
-
 ```mermaid
 flowchart LR
     client["Клиентское приложение<br/>или Postman"]
@@ -51,7 +49,6 @@ flowchart LR
 Ресурсы API, их поля и связи. Все ресурсы вложены в устройство (`/v1/devices/{deviceId}/...`).
 `?` — необязательное поле.
 
-![Модель ресурсов](diagrams/02-resources.svg)
 
 ```mermaid
 classDiagram
@@ -156,7 +153,6 @@ classDiagram
 Отклонённый запрос (`4xx`) ресурс команды не создаёт. Принятая команда (`202`) проходит
 `ACCEPTED → IN_PROGRESS` и завершается `SUCCEEDED` или `FAILED`.
 
-![Жизненный цикл команды](diagrams/03-command-lifecycle.svg)
 
 ```mermaid
 stateDiagram-v2
@@ -184,7 +180,6 @@ stateDiagram-v2
 `PUT` синхронный: `200` приходит только после того, как устройство применило конфигурацию.
 Если подтверждения нет, в силе остаётся прежняя конфигурация.
 
-![Замена конфигурации](diagrams/04-configuration-put.svg)
 
 ```mermaid
 sequenceDiagram
@@ -228,7 +223,6 @@ sequenceDiagram
 API принимает команду и сразу отвечает `202`; результат клиент узнаёт опросом ресурса
 из заголовка `Location`. Интервалы опроса — рекомендация, контракт их не задаёт.
 
-![Отправка команды и опрос статуса](diagrams/05-command-flow.svg)
 
 ```mermaid
 sequenceDiagram
@@ -262,7 +256,6 @@ sequenceDiagram
 Как сервер решает, что ответить на `POST /commands` с ключом. Ключ действует в пределах
 владельца токена, устройства и эндпоинта и хранится 24 часа.
 
-![Обработка Idempotency-Key](diagrams/06-idempotency.svg)
 
 ```mermaid
 flowchart TD
@@ -290,7 +283,6 @@ flowchart TD
 
 Курсор привязан к `from` и `to`: между страницами их менять нельзя, `limit` — можно.
 
-![Чтение телеметрии по страницам](diagrams/07-telemetry-paging.svg)
 
 ```mermaid
 flowchart TD
@@ -317,7 +309,6 @@ flowchart TD
 и таймаутов допустимы только для безопасных запросов: `GET`, `PUT /configuration`
 и `POST /commands` с `Idempotency-Key`.
 
-![Как клиенту реагировать на ответ](diagrams/08-client-decisions.svg)
 
 ```mermaid
 flowchart LR
